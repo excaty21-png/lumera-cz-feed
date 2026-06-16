@@ -171,6 +171,19 @@ app.get('/refresh', (req, res) => {
   res.json({ status: 'cache cleared' });
 });
 
+app.get('/debug', async (req, res) => {
+  try {
+    const xml = await fetchAtomPage(1);
+    const parsed = await parseAtom(xml);
+    const entry = parsed.feed.entry[0];
+    const keys = Object.keys(entry);
+    const variantSample = entry['s:variant'] ? entry['s:variant'][0] : null;
+    res.json({ keys, variantSample, titleSample: entry.title });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/feed.xml', async (req, res) => {
   if (isCacheValid()) {
     res.setHeader('Content-Type', 'application/xml; charset=utf-8');
