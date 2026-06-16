@@ -137,35 +137,20 @@ function makeItem({ id, title, description, link, image, price, color, size }) {
 
 async function buildFeed() {
   const allEntries = [];
-  let page = 1;
 
-  while (page <= 50) {
-    let xml;
-    try {
-      xml = await fetchAtomPage(page);
-    } catch (err) {
-      console.error(`Fetch error page ${page}:`, err.message);
-      break;
-    }
-
-    let parsed;
-    try {
-      parsed = await parseAtom(xml);
-    } catch (err) {
-      console.error(`Parse error page ${page}:`, err.message);
-      break;
-    }
-
-    const entries = parsed && parsed.feed && parsed.feed.entry;
-    if (!entries || entries.length === 0) {
-      console.log(`Page ${page}: empty, stopping.`);
-      break;
-    }
-
-    console.log(`Page ${page}: ${entries.length} entries`);
-    allEntries.push(...entries);
-    page++;
+  // Shopify ATOM feed does not support pagination — every ?page=N returns
+  // identical entries. Fetch only page 1.
+  let xml;
+  try {
+    xml = await fetchAtomPage(1);
+  } catch (err) {
+    console.error('Fetch error:', err.message);
+    throw err;
   }
+
+  const parsed = await parseAtom(xml);
+  const entries = (parsed && parsed.feed && parsed.feed.entry) || [];
+  allEntries.push(...entries);
 
   console.log(`Total entries: ${allEntries.length}`);
 
