@@ -60,6 +60,7 @@ function getText(field) {
 
 function buildItems(entries) {
   const items = [];
+  const seenIds = new Set();
 
   for (const entry of entries) {
     const title = getText(entry.title);
@@ -95,6 +96,9 @@ function buildItems(entries) {
         ? `_${slugId(varTitle.replace(/\s*\/\s*/g, '_'))}`
         : '';
       const itemId = sku ? `${sku}${suffix}` : slugId(`${link}${suffix}`);
+
+      if (seenIds.has(itemId)) continue;
+      seenIds.add(itemId);
 
       items.push(makeItem({
         id: itemId,
