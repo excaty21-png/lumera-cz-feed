@@ -15,10 +15,10 @@ function isCacheValid() {
 }
 
 async function fetchAtomPage(page) {
-  const url = `${SHOPIFY_BASE}?page=${page}`;
-  const res = await axios.get(url, {
+  const res = await axios.get(`${SHOPIFY_BASE}?page=${page}`, {
     timeout: 15000,
-    headers: { 'User-Agent': 'LumeraCZFeed/1.0' }
+    headers: { 'User-Agent': 'LumeraCZFeed/1.0' },
+    responseType: 'text'
   });
   return res.data;
 }
@@ -36,80 +36,85 @@ function extractImageFromSummary(summary) {
   return match ? match[0] : null;
 }
 
+function getText(field) {
+  if (!field) return '';
+  const val = Array.isArray(field) ? field[0] : field;
+  return typeof val === 'object' ? (val._ || '') : String(val || '');
+}
+
 function buildItems(entries) {
   const items = [];
 
   for (const entry of entries) {
-    const title = (entry.title && entry.title[0]) ? (typeof entry.title[0] === 'object' ? entry.title[0]._ : entry.title[0]) : '';
+    const title = getText(entry.title);
     const linkEl = entry.link ? entry.link[0] : null;
     const link = linkEl && linkEl.$ ? linkEl.$.href : '';
-    const summary = entry.summary ? entry.summary[0] : null;
-    const image = extractImageFromSummary(summary);
+    const image = extractImageFromSummary(entry.summary);
 
-    // s: namespace fields
-    const ns = 's';
-    const variants = entry[`${ns}:variant`] || [];
-    const entryPrice = entry[`${ns}:price`] ? entry[`${ns}:price`][0] : null;
+    const variants = entry['s:variant'] || [];
 
     if (variants.length === 0) {
-      // No variants — emit a single item
-      const id = entry.id ? entry.id[0] : link;
-      const price = entryPrice ? `${entryPrice} CZK` : '0 CZK';
+      items.push(makeItem({ id: getText(entry.id), title, link, image, price: '0 PLN' }));
+      continue;
+    }
 
-      items.push({
-        'g:id': [id],
-        'title': [title],
-        'link': [link],
-        'g:image_link': image ? [image] : [''],
-        'g:price': [price],
-        'g:availability': ['in stock'],
-        'g:condition': ['new'],
-        'g:brand': ['Lumera'],
-        'g:gender': ['female'],
-        'g:age_group': ['adult']
-      });
-    } else {
-      for (const variant of variants) {
-        const varId = variant.$ ? variant.$.id : '';
-        const varTitle = variant.$ ? (variant.$.title || title) : title;
-        const varPrice = variant.$ ? (variant.$.price || entryPrice || '0') : (entryPrice || '0');
-        const varColor = variant.$ ? variant.$.option1 : null;
-        const varSize = variant.$ ? variant.$.option2 : null;
+    for (const variant of variants) {
+      const varId = getText(variant.id);
+      const varTitle = getText(variant.title);
+      const sku = getText(variant['s:sku']);
 
-        const item = {
-          'g:id': [varId || `${link}_${varTitle}`],
-          'title': [`${title}${varTitle && varTitle !== 'Default Title' ? ' - ' + varTitle : ''}`],
-          'link': [link],
-          'g:image_link': image ? [image] : [''],
-          'g:price': [`${varPrice} CZK`],
-          'g:availability': ['in stock'],
-          'g:condition': ['new'],
-          'g:brand': ['Lumera'],
-          'g:gender': ['female'],
-          'g:age_group': ['adult']
-        };
+      // Price: xml2js parses <s:price currency="PLN">119.90</s:price>
+      // as { _: "119.90", $: { currency: "PLN" } } or just "119.90"
+      const priceField = variant['s:price'] ? variant['s:price'][0] : null;
+      const priceVal = priceField
+        ? (typeof priceField === 'object' ? (priceField._ || '0') : String(priceField))
+        : '0';
+      const currency = (priceField && priceField.$ && priceField.$.currency) || 'PLN';
+      const price = `${priceVal} ${currency}`;
 
-        if (varColor && varColor !== 'Default Title') item['g:color'] = [varColor];
-        if (varSize && varSize !== 'Default Title') item['g:size'] = [varSize];
+      // title format: "Renk / Beden" → split
+      const parts = varTitle.split(' / ');
+      const color = parts[0] && parts[0] !== 'Default Title' ? parts[0] : null;
+      const size = parts[1] && parts[1] !== 'Default Title' ? parts[1] : null;
 
-        items.push(item);
-      }
+      // Unique ID: SKU or varId + title slug
+      const itemId = sku || `${varId}_${varTitle}`.replace(/\s+/g, '_');
+
+      items.push(makeItem({ id: itemId, title: `${title}${varTitle && varTitle !== 'Default Title' ? ' - ' + varTitle : ''}`, link, image, price, color, size }));
     }
   }
 
   return items;
 }
 
+function makeItem({ id, title, link, image, price, color, size }) {
+  const item = {
+    'g:id': [id],
+    title: [title],
+    link: [link],
+    'g:image_link': [image || ''],
+    'g:price': [price],
+    'g:availability': ['in stock'],
+    'g:condition': ['new'],
+    'g:brand': ['Lumera'],
+    'g:gender': ['female'],
+    'g:age_group': ['adult']
+  };
+  if (color) item['g:color'] = [color];
+  if (size) item['g:size'] = [size];
+  return item;
+}
+
 async function buildFeed() {
   const allEntries = [];
   let page = 1;
 
-  while (true) {
+  while (page <= 50) {
     let xml;
     try {
       xml = await fetchAtomPage(page);
     } catch (err) {
-      console.error(`Failed to fetch page ${page}:`, err.message);
+      console.error(`Fetch error page ${page}:`, err.message);
       break;
     }
 
@@ -117,42 +122,35 @@ async function buildFeed() {
     try {
       parsed = await parseAtom(xml);
     } catch (err) {
-      console.error(`Failed to parse page ${page}:`, err.message);
+      console.error(`Parse error page ${page}:`, err.message);
       break;
     }
 
     const entries = parsed && parsed.feed && parsed.feed.entry;
     if (!entries || entries.length === 0) {
-      console.log(`Page ${page}: no entries, stopping.`);
+      console.log(`Page ${page}: empty, stopping.`);
       break;
     }
 
     console.log(`Page ${page}: ${entries.length} entries`);
     allEntries.push(...entries);
     page++;
-
-    // Safety limit
-    if (page > 50) break;
   }
 
-  console.log(`Total entries fetched: ${allEntries.length}`);
+  console.log(`Total entries: ${allEntries.length}`);
 
   const items = buildItems(allEntries);
+  console.log(`Total items (variants): ${items.length}`);
 
   const feedObj = {
     rss: {
-      $: {
-        version: '2.0',
-        'xmlns:g': 'http://base.google.com/ns/1.0'
-      },
-      channel: [
-        {
-          title: ['Lumera CZ Product Feed'],
-          link: ['https://lumerastore.pl'],
-          description: ['Lumera Czech product catalog for Meta Shopping'],
-          item: items
-        }
-      ]
+      $: { version: '2.0', 'xmlns:g': 'http://base.google.com/ns/1.0' },
+      channel: [{
+        title: ['Lumera CZ Product Feed'],
+        link: ['https://lumerastore.pl'],
+        description: ['Lumera Czech product catalog for Meta Shopping'],
+        item: items
+      }]
     }
   };
 
@@ -165,10 +163,10 @@ async function buildFeed() {
 }
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', cachedAt: cache.builtAt });
+  res.json({ status: 'ok', cachedAt: cache.builtAt, itemCount: cache.itemCount || 0 });
 });
 
-app.get('/refresh', async (req, res) => {
+app.get('/refresh', (req, res) => {
   cache = { xml: null, builtAt: null };
   res.json({ status: 'cache cleared' });
 });
