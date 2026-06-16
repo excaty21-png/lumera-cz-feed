@@ -77,8 +77,9 @@ function buildItems(entries) {
       const color = parts[0] && parts[0] !== 'Default Title' ? parts[0] : null;
       const size = parts[1] && parts[1] !== 'Default Title' ? parts[1] : null;
 
-      // Unique ID: SKU or varId + title slug
-      const itemId = sku || `${varId}_${varTitle}`.replace(/\s+/g, '_');
+      // Unique ID: SKU_Color_Size (Meta requires unique per variant)
+      const suffix = varTitle && varTitle !== 'Default Title' ? `_${varTitle.replace(/\s*\/\s*/g, '_').replace(/\s+/g, '-')}` : '';
+      const itemId = sku ? `${sku}${suffix}` : `${varId}${suffix}`.replace(/\s+/g, '_');
 
       items.push(makeItem({ id: itemId, title: `${title}${varTitle && varTitle !== 'Default Title' ? ' - ' + varTitle : ''}`, link, image, price, color, size }));
     }
