@@ -36,6 +36,22 @@ function extractImageFromSummary(summary) {
   return match ? match[0] : null;
 }
 
+function extractDescFromSummary(summary) {
+  if (!summary) return '';
+  const str = Array.isArray(summary) ? summary[0] : summary;
+  const content = typeof str === 'object' ? (str._ || '') : str;
+  // Strip HTML tags, collapse whitespace
+  return content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 500);
+}
+
+function slugId(str) {
+  return str
+    .normalize('NFD').replace(/[̀-ͯ]/g, '') // remove diacritics
+    .replace(/[^a-zA-Z0-9_\-]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '');
+}
+
 function getText(field) {
   if (!field) return '';
   const val = Array.isArray(field) ? field[0] : field;
@@ -50,21 +66,19 @@ function buildItems(entries) {
     const linkEl = entry.link ? entry.link[0] : null;
     const link = linkEl && linkEl.$ ? linkEl.$.href : '';
     const image = extractImageFromSummary(entry.summary);
+    const description = extractDescFromSummary(entry.summary) || title;
 
     const variants = entry['s:variant'] || [];
 
     if (variants.length === 0) {
-      items.push(makeItem({ id: getText(entry.id), title, link, image, price: '0 PLN' }));
+      items.push(makeItem({ id: slugId(getText(entry.id)), title, description, link, image, price: '0 PLN' }));
       continue;
     }
 
     for (const variant of variants) {
-      const varId = getText(variant.id);
       const varTitle = getText(variant.title);
       const sku = getText(variant['s:sku']);
 
-      // Price: xml2js parses <s:price currency="PLN">119.90</s:price>
-      // as { _: "119.90", $: { currency: "PLN" } } or just "119.90"
       const priceField = variant['s:price'] ? variant['s:price'][0] : null;
       const priceVal = priceField
         ? (typeof priceField === 'object' ? (priceField._ || '0') : String(priceField))
@@ -72,26 +86,37 @@ function buildItems(entries) {
       const currency = (priceField && priceField.$ && priceField.$.currency) || 'PLN';
       const price = `${priceVal} ${currency}`;
 
-      // title format: "Renk / Beden" → split
       const parts = varTitle.split(' / ');
       const color = parts[0] && parts[0] !== 'Default Title' ? parts[0] : null;
       const size = parts[1] && parts[1] !== 'Default Title' ? parts[1] : null;
 
-      // Unique ID: SKU_Color_Size (Meta requires unique per variant)
-      const suffix = varTitle && varTitle !== 'Default Title' ? `_${varTitle.replace(/\s*\/\s*/g, '_').replace(/\s+/g, '-')}` : '';
-      const itemId = sku ? `${sku}${suffix}` : `${varId}${suffix}`.replace(/\s+/g, '_');
+      // ASCII-safe unique ID: SKU_Color_Size
+      const suffix = varTitle && varTitle !== 'Default Title'
+        ? `_${slugId(varTitle.replace(/\s*\/\s*/g, '_'))}`
+        : '';
+      const itemId = sku ? `${sku}${suffix}` : slugId(`${link}${suffix}`);
 
-      items.push(makeItem({ id: itemId, title: `${title}${varTitle && varTitle !== 'Default Title' ? ' - ' + varTitle : ''}`, link, image, price, color, size }));
+      items.push(makeItem({
+        id: itemId,
+        title: `${title}${varTitle && varTitle !== 'Default Title' ? ' - ' + varTitle : ''}`,
+        description,
+        link,
+        image,
+        price,
+        color,
+        size
+      }));
     }
   }
 
   return items;
 }
 
-function makeItem({ id, title, link, image, price, color, size }) {
+function makeItem({ id, title, description, link, image, price, color, size }) {
   const item = {
     'g:id': [id],
     title: [title],
+    'g:description': [description || title],
     link: [link],
     'g:image_link': [image || ''],
     'g:price': [price],
